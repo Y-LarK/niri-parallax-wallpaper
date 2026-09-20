@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -22,6 +23,26 @@ PanelWindow {
     property string query: ""
     property int selectedIndex: 0
     property string viewStyle: Config.launcherViewStyle
+
+    // -------------------------------------------------------- 开关动画状态
+    // opened 是**逻辑**状态（IPC 语义、输入框焦点归属）；reveal 是**视觉**展开度 0~1。
+    //
+    // 窗口可见性与键盘焦点都取自这两者的组合，**刻意不设第三个 closing 标志**。
+    // 之前用 `opened || closing` 的写法必然要「先置 opened=false、再置 closing=true」，
+    // 两次赋值之间绑定会求值到瞬时 false：surface 先 unmap 再 map、键盘焦点先放再抓，
+    // 观感上就是关闭时闪两下。2026-09-20 实测确认，关闭一次 visible 变了
+    // true → false → true → false 共三次。改用 reveal 判断就全程单调了。
+    // 展开度 0~1，由下面那条 NumberAnimation 单向驱动。
+    // 刻意不用 Behavior —— Behavior 会被**任何**对 reveal 的赋值触发，
+    // 而这里需要在「退场途中重新打开」时精确控制重启，只有显式 restart 才可控。
+    property real reveal: 0
+
+    // 动画派生量，面板与它的投影共用一份，免得两处各写一遍公式后渐渐走样。
+    // reveal=0 → 起始态（缩放 Config.launcherAnimScale、上移 Config.launcherAnimOffsetY），
+    // reveal=1 → 归位（缩放 1、偏移 0）。
+    readonly property real animScale: Config.launcherAnimScale + (1 - Config.launcherAnimScale) * root.reveal
+    readonly property real animOffsetY: Config.launcherAnimOffsetY * (1 - root.reveal)
+
 
     // ------------------------------------------------------ 壁纸选择
     // 目录与 ~/.local/bin/set-wallpaper 的 WALLPAPER_DIR 是同一处约定
@@ -119,13 +140,18 @@ PanelWindow {
     }
 
     // ------------------------------------------------------------ 窗口
-    visible: opened
+    // 可见性与键盘焦点同源：opened 为真，或退场动画还没走完（reveal > 0）。
+    // reveal 归零时 visible 自动变 false，不需要额外的收尾逻辑。
+    // 这样每次开关这两项都只翻转一次，不会出现中间态（见上面状态属性的说明）。
+    visible: root.opened || root.reveal > 0
     color: "transparent"
 
     WlrLayershell.namespace: "niri-launcher"
     WlrLayershell.layer: WlrLayer.Overlay
-    // 关键：不设 Exclusive 就收不到键盘输入
-    WlrLayershell.keyboardFocus: opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    // 关键：不设 Exclusive 就收不到键盘输入。
+    // 退场动画期间继续独占：那时面板仍然可见，此时放开焦点会让键盘输入漏给
+    // 底下的窗口，观感上是「还没关完就已经穿透了」。
+    WlrLayershell.keyboardFocus: (root.opened || root.reveal > 0) ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     WlrLayershell.exclusionMode: ExclusionMode.Ignore
 
     // 屏幕尺寸从 screen 属性取 —— 不能再用 root.width/height，
@@ -329,17 +355,48 @@ PanelWindow {
         root.selectedIndex = 0;
         root.viewStyle = Config.launcherViewStyle;
         root.opened = true;
+        // 不设 from：NumberAnimation 以「当前 reveal 值」为起点，
+        // 于是退场途中重新打开能从当前位置平滑接上，而不是跳回 0 重来一遍。
+        revealAnim.to = 1;
+        revealAnim.restart();
         // 重扫壁纸目录，新放进来的图立刻可见
         root.scanWallpapers();
         searchField.forceActiveFocus();
     }
 
+    // 播退场动画。窗口不必在这里隐藏 —— reveal 归零时 visible 自己会变 false。
+    // 重复调用是安全的（退场途中 opened 已是 false 就直接返回），否则连按 Esc
+    // 会反复重启动画，看起来像卡住不动。
     function close() {
+        if (!root.opened)
+            return;
         root.opened = false;
+        revealAnim.to = 0;
+        revealAnim.restart();
     }
 
     function toggle() {
+        // 判据用 opened 而非可见性：退场动画进行中 opened 已经是 false，
+        // 此时该做的是「重新打开」，而不是再触发一次 close。
         root.opened ? root.close() : root.open();
+    }
+
+    // 开关动画的唯一定时源。时长与曲线都跟随 opened：
+    //   入场 OutCubic —— 快进慢停，入场曲线的通用做法；
+    //   退场 InCubic —— 慢起快走，让面板不透明度撑到最后再快速归零。
+    // 退场之所以要「慢起」，是因为 niri 侧那块模糊矩形不跟随面板 alpha ——
+    // 面板越早变透明，那层毛玻璃暴露得越久（详见 ParallaxConfig 里退场时长的说明）。
+    //
+    // 读值时机没问题：open()/close() 都是先置 opened、后 restart()，
+    // 动画重启时读到的必然是对应方向的那一组参数。
+    // 不需要 onFinished 收尾：隐藏窗口这件事完全由 reveal 的值驱动。
+    NumberAnimation {
+        id: revealAnim
+
+        target: root
+        property: "reveal"
+        duration: root.opened ? Config.launcherAnimDurationMs : Config.launcherCloseDurationMs
+        easing.type: root.opened ? Easing.OutCubic : Easing.InCubic
     }
 
     function toggleViewStyle() {
@@ -456,12 +513,42 @@ PanelWindow {
     // 关闭请用 Esc，或再按一次 Mod+Space。
 
     // ------------------------------------------------------------ 面板
+    // 投影。RectangularShadow 是 Qt 6.9+ 的 QtQuick.Effects 类型，按自身几何绘制
+    // 阴影、不需要 source（这点与 MultiEffect 不同，不强制额外分层，开销小得多）。
+    // 必须声明在 panel **之前** —— QML 同级项按声明顺序决定 z 序，放后面会盖住面板。
+    // 这里填满 parent 而不是 anchors.fill: panel：panel 同样是填满 parent 的，
+    // 几何等价，但免掉了对后面声明项的依赖。
+    // 三个动画绑定必须与 panel 保持一致，否则退场时会看到一圈孤立的阴影留在原地。
+    RectangularShadow {
+        anchors.fill: parent
+        radius: Config.launcherPanelRadius
+        blur: Config.launcherShadowBlur
+        color: Qt.rgba(0, 0, 0, Config.launcherShadowOpacity)
+        offset: Qt.vector2d(0, Config.launcherShadowOffsetY)
+        visible: Config.launcherShadowEnabled
+        opacity: root.reveal
+        scale: root.animScale
+        transform: Translate {
+            y: root.animOffsetY
+        }
+    }
+
     Rectangle {
         id: panel
 
         // 窗口尺寸已等于面板尺寸，这里直接铺满
         anchors.fill: parent
-        radius: 14
+        radius: Config.launcherPanelRadius
+
+        // 开关动画。**窗口尺寸不变**，只动这三个 —— 窗口自身 resize 会让 GridView
+        // 每帧重算 cellWidth 并重排全部 delegate（同下面紧跟着的那段说明）。
+        opacity: root.reveal
+        scale: root.animScale
+        // 用 transform 而非改 anchors：anchors 是布局、动它要重算几何，
+        // transform 是纯绘制变换，动画期间不触发布局。
+        transform: Translate {
+            y: root.animOffsetY
+        }
         // 半透明面板。色源 / 不透明度 / 明暗系数都在 ParallaxConfig 里可调。
         // 色源默认取 primaryContainer（随壁纸变）；用 surface* 族会得到一块不随壁纸的
         // 中性灰，贴在彩色壁纸上会显脏 —— 详见 ParallaxConfig 里的说明。
@@ -490,19 +577,57 @@ PanelWindow {
             Rectangle {
                 width: parent.width
                 height: 46
-                radius: 10
+                radius: Config.launcherInputRadius
                 color: root.tone(root.ca(Config.launcherInputSurface, Config.launcherInputOpacity,
                                          Qt.rgba(1, 1, 1, 0.06)),
                                  Config.launcherInputBrightness, Config.launcherInputSaturation)
                 border.width: searchField.activeFocus ? 1 : 0
                 border.color: root.ca("primary", 0.6, Qt.rgba(0.61, 0.8, 0.98, 0.6))
 
+                // 放大镜。手绘而非取图标主题 —— 主题里的 edit-find 是给浅色背景画的
+                // 深色图标，贴在这块深色面板上几乎看不见；手绘还能让颜色跟着 matugen
+                // 的 onSurfaceVariant 走，随壁纸换色。
+                Item {
+                    id: searchIcon
+
+                    anchors.left: parent.left
+                    anchors.leftMargin: 15
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 13
+                    height: 13
+                    opacity: 0.55
+
+                    // 镜片：圆环，外径 11
+                    Rectangle {
+                        width: 11
+                        height: 11
+                        radius: width / 2
+                        color: "transparent"
+                        border.width: 1.6
+                        border.color: root.c("onSurfaceVariant", "#c4c6cf")
+                    }
+
+                    // 手柄：自圆环右下沿 45° 伸出。
+                    // transformOrigin 取 Left 即绕「左边缘中点」旋转，所以 y 要减去
+                    // 半个高度，把旋转轴落到 (x, y + h/2) = (8.5, 8.5) 这个起点上。
+                    Rectangle {
+                        x: 8.5
+                        y: 7.7
+                        width: 4.5
+                        height: 1.6
+                        color: root.c("onSurfaceVariant", "#c4c6cf")
+                        rotation: 45
+                        transformOrigin: Item.Left
+                    }
+                }
+
                 TextInput {
                     id: searchField
 
                     anchors.fill: parent
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 76
+                    // 左侧让开放大镜，右侧让开「清空按钮 + 样式提示」
+                    anchors.leftMargin: 40
+                    anchors.rightMargin: 112
                     verticalAlignment: TextInput.AlignVCenter
                     color: root.c("onSurface", "#cdd6f4")
                     font.pixelSize: 17
@@ -545,6 +670,8 @@ PanelWindow {
 
                 // 样式提示（右对齐）
                 Text {
+                    id: styleHint
+
                     anchors.right: parent.right
                     anchors.rightMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
@@ -552,12 +679,77 @@ PanelWindow {
                     color: root.ca("onSurfaceVariant", 0.5, Qt.rgba(1, 1, 1, 0.3))
                     font.pixelSize: 12
                 }
+
+                // 清空输入。只在有内容时出现，贴在样式提示左侧 ——
+                // 所以声明在 styleHint 之后，靠它定位（避免对后面声明项的前向引用）。
+                // 这里给悬停反馈是有意的：项目里「鼠标划过不做视觉变化」那条原则针对的是
+                // 结果列表项（划过不该把键盘的选中位置带走），独立按钮不受它约束。
+                Item {
+                    id: clearButton
+
+                    anchors.right: styleHint.left
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 18
+                    height: 18
+                    visible: searchField.text !== ""
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: width / 2
+                        color: root.ca("onSurfaceVariant", clearMouse.containsMouse ? 0.24 : 0.12,
+                                       Qt.rgba(1, 1, 1, clearMouse.containsMouse ? 0.2 : 0.1))
+
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: 120
+                            }
+                        }
+                    }
+
+                    // × 用两根交叉短棒画，同样是不依赖字体里有没有 × 字形
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 8
+                        height: 1.5
+                        radius: height / 2
+                        color: root.c("onSurface", "#cdd6f4")
+                        rotation: 45
+                    }
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 8
+                        height: 1.5
+                        radius: height / 2
+                        color: root.c("onSurface", "#cdd6f4")
+                        rotation: -45
+                    }
+
+                    MouseArea {
+                        id: clearMouse
+
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        // 只清输入框本身即可：query / selectedIndex 由 searchField 的
+                        // onTextChanged 单向同步过去，重复赋值反而多一条路径。
+                        onClicked: {
+                            searchField.text = "";
+                            searchField.forceActiveFocus();
+                        }
+                    }
+                }
             }
 
             // ---- 结果区 ----
+            // 高度公式里的两个常数与上方搜索框、下方状态栏配平：
+            //   56 = 搜索框 46 + Column spacing 10
+            //   30 = 状态栏 20 + Column spacing 10
+            // 改任一高度都要同步改这里，否则会溢出面板或留出空档。
             Item {
                 width: parent.width
-                height: parent.height - 56 - 22
+                height: parent.height - 56 - 30
 
                 // ============ 列表视图 ============
                 ListView {
@@ -577,13 +769,27 @@ PanelWindow {
                         required property var modelData
                         required property int index
 
+                        readonly property bool selected: row.index === root.selectedIndex
+
                         width: resultList.width
                         height: 44
-                        radius: 8
-                        color: index === root.selectedIndex ? root.ca("primary",
-                                                                      Config.launcherSelectedOpacity,
-                                                                      Qt.rgba(0.61, 0.8, 0.98,
-                                                                              Config.launcherSelectedOpacity)) : "transparent"
+                        radius: Config.launcherRowRadius
+                        color: row.selected ? root.ca("primary", Config.launcherSelectedOpacity,
+                                                      Qt.rgba(0.61, 0.8, 0.98,
+                                                              Config.launcherSelectedOpacity)) : "transparent"
+
+                        // 选中项左侧的强调条。网格视图靠图标放大表示选中，列表这边原先
+                        // 只有背景色变化，两处动效语言不成对，补上这一条。
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: 3
+                            width: Config.launcherAccentBarWidth
+                            height: parent.height - 18
+                            radius: width / 2
+                            color: root.ca("primary", 0.95, Qt.rgba(0.61, 0.8, 0.98, 0.95))
+                            visible: row.selected && Config.launcherAccentBarWidth > 0
+                        }
 
                         Row {
                             anchors.fill: parent
@@ -693,7 +899,7 @@ PanelWindow {
 
                             anchors.fill: parent
                             anchors.margins: Config.launcherCellGap / 2
-                            radius: 12
+                            radius: Config.launcherCellRadius
                             // 只有选中态有背景，鼠标划过不做任何视觉变化
                             color: tile.selected ? root.ca("primary", Config.launcherSelectedOpacity,
                                                            Qt.rgba(0.61, 0.8, 0.98,
@@ -877,9 +1083,11 @@ PanelWindow {
             }
 
             // ---- 底部状态栏 ----
+            // 高度 20 是给键帽留的（原先一整行纯文字只要 12）。
+            // 这个值与上面结果区的 height 公式配平，见那里的说明。
             Item {
                 width: parent.width
-                height: 12
+                height: 20
 
                 // 按住 Ctrl：显示当前选中项的启动命令 / 目标地址
                 Text {
@@ -901,15 +1109,76 @@ PanelWindow {
                     }
                 }
 
-                // 默认：快捷键提示
-                Text {
+                // 默认：快捷键提示。改成「键帽 + 说明」交替排布，比一整行纯文字好扫读。
+                Row {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     visible: !root.controlHeld
-                    text: root.wallpaperMode
-                          ? "↑↓←→ 选择 · Enter/双击 应用壁纸 · Esc 关闭" : "↑↓←→ 选择 · Enter/双击 启动 · ^G 切换样式 · 按住 ^ 看命令 · Esc 关闭"
-                    color: root.ca("onSurfaceVariant", 0.45, Qt.rgba(1, 1, 1, 0.28))
-                    font.pixelSize: 11
+                    spacing: 14
+
+                    Row {
+                        spacing: 5
+
+                        KbdKey {
+                            label: "↑↓←→"
+                        }
+
+                        HintLabel {
+                            text: "选择"
+                        }
+                    }
+
+                    Row {
+                        spacing: 5
+
+                        KbdKey {
+                            label: "Enter"
+                        }
+
+                        HintLabel {
+                            text: root.wallpaperMode ? "应用壁纸" : "启动"
+                        }
+                    }
+
+                    // 下面两组只在应用模式出现 —— 壁纸模式下它们没有意义。
+                    // Row 会自动跳过 visible 为 false 的子项，不留空隙。
+                    Row {
+                        spacing: 5
+                        visible: !root.wallpaperMode
+
+                        KbdKey {
+                            label: "^G"
+                        }
+
+                        HintLabel {
+                            text: "切换样式"
+                        }
+                    }
+
+                    Row {
+                        spacing: 5
+                        visible: !root.wallpaperMode
+
+                        KbdKey {
+                            label: "^"
+                        }
+
+                        HintLabel {
+                            text: "按住看命令"
+                        }
+                    }
+
+                    Row {
+                        spacing: 5
+
+                        KbdKey {
+                            label: "Esc"
+                        }
+
+                        HintLabel {
+                            text: "关闭"
+                        }
+                    }
                 }
             }
         }
@@ -944,5 +1213,38 @@ PanelWindow {
             root.wallpaperPaths = unique;
             root.wallpaperScanBuffer = [];
         }
+    }
+
+    // ---------------------------------------------------- 底部提示的内联组件
+    // 用 inline component 而不是各建一个文件：这两者只服务于底部那一行提示，
+    // 拆成文件要多付一次跨文件跳转的成本，不值。
+    component KbdKey: Rectangle {
+        property string label: ""
+
+        // 宽度跟着文字走 —— 「↑↓←→」这类中文键名比「Esc」宽得多，写死宽度必然对不齐
+        width: keyText.implicitWidth + 12
+        height: 18
+        radius: 5
+        color: root.ca("onSurfaceVariant", 0.13, Qt.rgba(1, 1, 1, 0.09))
+        border.width: 1
+        border.color: root.ca("onSurfaceVariant", 0.18, Qt.rgba(1, 1, 1, 0.1))
+
+        Text {
+            id: keyText
+
+            anchors.centerIn: parent
+            text: parent.label
+            color: root.ca("onSurfaceVariant", 0.85, Qt.rgba(1, 1, 1, 0.72))
+            font.pixelSize: 10
+        }
+    }
+
+    component HintLabel: Text {
+        // 固定 18 与键帽同高，Row 里顶部对齐即视觉居中。
+        // 不能在 Row 的子项上用 anchors.verticalCenter —— Positioner 与 anchors 冲突。
+        height: 18
+        verticalAlignment: Text.AlignVCenter
+        color: root.ca("onSurfaceVariant", 0.5, Qt.rgba(1, 1, 1, 0.34))
+        font.pixelSize: 11
     }
 }

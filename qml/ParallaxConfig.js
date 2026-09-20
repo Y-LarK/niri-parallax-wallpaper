@@ -111,11 +111,14 @@ var launcherGridWidth = 920
 var launcherMaxHeight = 560
 
 // 面板不透明度：1 = 完全不透明，越小越透。
-// 注意 niri 的 background-effect 模糊已按要求关闭 —— 没有模糊兜底时，半透明会让
-// 面板底下的内容（终端文字之类）直接渗上来、跟图标文字叠在一起，观感非常脏。
-// 所以这里维持高不透明度把底层挡住；想调低这一项，必须先把
-// ~/.config/niri/config.kdl 里 namespace 为 niri-launcher 的 layer-rule 模糊打开。
-// 参考：kitty 的 background_opacity 是 0.75（那边有模糊兜底，所以能压得更低）。
+//
+// **这一项与 niri 侧的模糊是一对，必须同进同退。** 依赖
+// ~/.config/niri/config.kdl 里 namespace 为 niri-launcher 的 layer-rule
+// （2026-09-20 重新开启，xray false）。没有模糊兜底时，半透明会让面板底下的内容
+// （终端文字之类）直接渗上来、跟图标文字叠在一起，观感非常脏 —— 那正是
+// 2026-09-15 ~ 2026-09-20 期间这一项被压到 0.9 的原因。
+// 关掉那条 layer-rule 就必须把这里调回 0.9，反之才能往下调。
+// 参考：kitty 的 background_opacity 是 0.75（那边一直有模糊兜底）。
 //
 // 面板背景用哪个色源，取 colors.json 里的 Material 角色名。关键取舍：
 //   surface* 族（surfaceContainerLow / surfaceContainer / surfaceContainerHigh /
@@ -126,21 +129,24 @@ var launcherMaxHeight = 560
 // 想要面板带壁纸色调，必须用后者。用 surface* 会得到一块跟壁纸毫无关系的死灰，
 // 贴在深色/彩色壁纸上会显得脏。
 var launcherPanelSurface = "primaryContainer"
-var launcherPanelOpacity = 0.9
+var launcherPanelOpacity = 0.62
 
 // 明暗系数：>1 提亮，<1 压暗，=1 原色（QML 侧由 Launcher.tone() 分派到
 // Qt.lighter / Qt.darker）。
 // 注意：压暗会把颜色的浓艳感放大（深色底 + 深蓝 = 「正蓝」），怕蓝太正就往亮调。
-var launcherPanelBrightness = 1.55
+var launcherPanelBrightness = 1.45
 
 // 饱和度缩放：1 = 原样，<1 更灰。提亮能冲淡色相，这一项进一步抹掉「蓝」。
-var launcherPanelSaturation = 0.4
+// 0.4 → 0.7（2026-09-20）：原先压到 0.4 是配合 0.9 的不透明度把面板「做平」，
+// 免得色块感过重；开了模糊之后这个补偿不再需要，放回来让面板重新带上壁纸色。
+var launcherPanelSaturation = 0.7
 
 // 输入框背景。用同一色源、再亮一档来跟面板拉开层次。
+// 饱和度比面板略低：输入框面积小，色度一高就会跳出来抢视线。
 var launcherInputSurface = "primaryContainer"
-var launcherInputOpacity = 0.7
+var launcherInputOpacity = 0.5
 var launcherInputBrightness = 1.9
-var launcherInputSaturation = 0.4
+var launcherInputSaturation = 0.55
 
 // 选中项的背景高亮：用主题的 primary（亮色）配这个不透明度。
 // 越小越浅、越透；调大到 0.5 以上会接近实色。
@@ -159,6 +165,42 @@ var launcherCellHeight = 134
 var launcherIconSize = 56
 var launcherCellGap = 8
 var launcherLabelFontSize = 14
+
+// ------------------------------------------------------------ 启动器外观
+// 圆角半径。原先这四个值是散在 Launcher.qml 里的硬编码 14/12/10/8，收拢到这里
+// 便于整体调整。数值呈阶梯而非等比：外层大内层小，视觉重量才平衡。
+var launcherPanelRadius = 16
+var launcherInputRadius = 11
+var launcherCellRadius = 12
+var launcherRowRadius = 9
+
+// ------------------------------------------------------ 启动器开关动画
+// 打开/关闭时的动画：整体缩放 + 淡入淡出 + 轻微纵向位移。
+// 面板自身的尺寸**不做动画** —— 窗口尺寸每帧变化会让 GridView 重算 cellWidth
+// 并重排全部 delegate，掉帧明显（同样的理由见 Launcher.qml 里对面板宽度的说明）。
+// 这里只动画内容，窗口大小恒定。
+//
+// 但「窗口大小恒定」也带来一个副作用：niri 的 background-effect 模糊的是 layer
+// surface 的**整个矩形**，并不跟随面板的 alpha。于是退场时面板已经淡出，那块模糊
+// 矩形却还在，会露出一层"毛玻璃"，直到 surface 被 unmount 才消失。
+// 退场比入场更短、且用 InCubic 让不透明度尽量撑到最后再快速归零，就是为了把这层
+// 残留压到察觉不到（2026-09-20 实测：170ms 的 OutCubic 退场时肉眼明显可见）。
+var launcherAnimDurationMs = 170 // 入场：OutCubic，快进慢停
+var launcherCloseDurationMs = 110 // 退场：InCubic，慢起快走（见上）
+var launcherAnimScale = 0.96 // 起始缩放，1 = 不做缩放
+var launcherAnimOffsetY = -10 // 起始纵向偏移，负值 = 从上方落下
+
+// ---------------------------------------------------------- 启动器投影
+// 用 QtQuick.Effects 的 RectangularShadow，让面板从壁纸上「浮起来」。
+// 关掉能省一次覆盖整个面板区域的模糊，低配机器上值得关。
+var launcherShadowEnabled = true
+var launcherShadowBlur = 28
+var launcherShadowOpacity = 0.5
+var launcherShadowOffsetY = 8
+
+// 列表视图选中项左侧的强调条宽度（px）。0 = 不显示。
+// 网格视图没有对应的东西（那边靠图标放大表示选中），故只在列表里出现。
+var launcherAccentBarWidth = 3
 
 // ------------------------------------------------------------ 壁纸选择
 // 在启动器搜索框里输入下列任一关键词（不区分大小写，需完全匹配），
