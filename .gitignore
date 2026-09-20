@@ -1,0 +1,22 @@
+# ── 构建产物 ────────────────────────────────────────────────────────
+# CMakeCache.txt / rules.ninja / *.d 里全是绝对路径，换目录即失效，
+# 入库只会制造噪音与冲突。重新生成：
+#   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+build/
+build.*/
+
+# ── 编辑器 / 工具 ──────────────────────────────────────────────────
+.idea/
+.vscode/
+*.user
+compile_commands.json
+.cache/
+
+# ── 本地手工备份 ───────────────────────────────────────────────────
+# 仓库本身即版本历史，这类备份无需入库。
+# 若要保留某个（如 qml/Launcher.qml.before-search-fix-20260916），
+# 用 `git add -f <文件>` 强制加入。
+*.before-*
+*.orig-*
+*.bak
+*~
