@@ -12,7 +12,8 @@ import "SearchEngines.js" as SearchEngines
 // 两种视图样式：
 //   grid —— 图标墙（默认，参数参考 Clavis 的 SpotlightAppGrid）
 //   list —— 紧凑列表
-// 运行时按 Ctrl+G 切换；默认样式由 ParallaxConfig.launcherViewStyle 决定。
+// 运行时按 Ctrl+G 切换，切换结果在**本次壳层运行期间**保持（关闭再打开不重置）；
+// 初始样式由 ParallaxConfig.launcherViewStyle 决定 —— 详见 open() 里的说明。
 //
 // 触发：IPC `launcher toggle`
 //   QS_CONFIG_PATH=<此目录>/shell.qml qs ipc call launcher toggle
@@ -22,6 +23,8 @@ PanelWindow {
     property bool opened: false
     property string query: ""
     property int selectedIndex: 0
+    // 初值只在**壳层启动时**生效；其后由 Ctrl+G 切换并保持，关闭启动器不再重置
+    // （见 open() 里的说明，2026-09-22 改）。
     property string viewStyle: Config.launcherViewStyle
 
     // -------------------------------------------------------- 开关动画状态
@@ -353,7 +356,10 @@ PanelWindow {
         searchField.text = "";
         root.query = "";
         root.selectedIndex = 0;
-        root.viewStyle = Config.launcherViewStyle;
+        // 这里**刻意不重置 viewStyle** —— 2026-09-22 起用户要求记住 Ctrl+G 的切换结果，
+        // 关闭再打开应保持上次的选择（在此之前是每次打开都强制回到配置里的默认样式）。
+        // 不重置并不会丢失默认值：viewStyle 的 property 初值仍是
+        // Config.launcherViewStyle，所以壳层重启后自然回到配置的默认样式。
         root.opened = true;
         // 不设 from：NumberAnimation 以「当前 reveal 值」为起点，
         // 于是退场途中重新打开能从当前位置平滑接上，而不是跳回 0 重来一遍。
