@@ -176,6 +176,13 @@ var launcherInputRadius = 11
 var launcherCellRadius = 12
 var launcherRowRadius = 9
 
+// 面板包边（2026-09-25 添加）：宽度与不透明度。
+// 颜色取自 Material You 的 primary 角色，**随壁纸色相变化**。
+// 注意别用 outline —— 那是中性灰角色，换壁纸时几乎不变（实测 #8e9099 → #8b9198），
+// 达不到"与壁纸配色联动"的效果。宽度 3px / 不透明度 1.0 是实测清晰可见的组合。
+var launcherBorderWidth = 3
+var launcherBorderOpacity = 1.0
+
 // ------------------------------------------------------ 启动器开关动画
 // 打开/关闭时的动画：整体缩放 + 淡入淡出 + 轻微纵向位移。
 // 面板自身的尺寸**不做动画** —— 窗口尺寸每帧变化会让 GridView 重算 cellWidth
@@ -194,8 +201,20 @@ var launcherAnimOffsetY = -10 // 起始纵向偏移，负值 = 从上方落下
 
 // ---------------------------------------------------------- 启动器投影
 // 用 QtQuick.Effects 的 RectangularShadow，让面板从壁纸上「浮起来」。
-// 关掉能省一次覆盖整个面板区域的模糊，低配机器上值得关。
-var launcherShadowEnabled = true
+//
+// 2026-09-25：**默认关闭**。原因是一个绕不开的死结：
+//   阴影必须画在面板矩形**之外**，而 layer-shell 的 surface 边界就是窗口矩形，
+//   绘制到边界外的内容一律不可见 —— 所以阴影会被裁。表现为 offset 向下 8px 时，
+//   下方两角的圆角被切成直线、上方两角却正常（实测确认，与 radius 无关）。
+//   要让它完整，就得把窗口撑到「面板 + blur + |offsetY|」；但 niri 的
+//   background-effect 作用于**整个 surface**，于是面板外会多出一整圈被模糊的区域
+//   （blur=28 时那圈宽 36px，肉眼非常明显）。
+//   两者不可兼得。3px 的 primary 包边已经足够交代面板边界，故选择干净的模糊边界。
+//
+// 想重新打开：把 enabled 设为 true 即可 —— Launcher.qml 的 shadowMargin 是条件式的
+// （为 false 时自动归零），窗口尺寸、面板内缩、阴影几何会跟着自动变，不用改别处。
+// 下面三项只在其为 true 时生效。
+var launcherShadowEnabled = false
 var launcherShadowBlur = 28
 var launcherShadowOpacity = 0.5
 var launcherShadowOffsetY = 8

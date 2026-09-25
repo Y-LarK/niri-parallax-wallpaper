@@ -66,6 +66,15 @@ PanelWindow {
     // 读不到时所有取色函数都会回落到硬编码兜底值，因此文件缺失也能正常显示。
     property var themeColors: ({})
     readonly property string colorsPath: (Quickshell.env("HOME") || "") + "/.cache/niri-quickshell/colors.json"
+    // 面板包边颜色。必须是**派生属性**而非直接在 border.color 里调 ca()：
+    // ca() 依赖 themeColors，而后者由 FileView 异步加载；写成派生属性，
+    // themeColors 变化时边框会自动重新求值（直接内联调用会停在初始化时的兜底值）。
+    //
+    // 色源用 primary 而非 outline —— outline 是 Material You 的中性灰角色，
+    // 不承载壁纸色相（实测三次换壁纸：#8e9099 → #928f99 → #8b9198，几乎不动），
+    // 而 primary 同期是 #a8c8ff → #c8bfff → #96ccf8，明显跟壁纸走。
+    readonly property color borderColor: root.ca("primary", Config.launcherBorderOpacity,
+                                                 Qt.rgba(0.61, 0.8, 0.98, Config.launcherBorderOpacity))
 
     FileView {
         id: colorsFile
@@ -169,18 +178,29 @@ PanelWindow {
                                                                                                      root.screenW - 80)
     readonly property real panelHeight: Math.min(Config.launcherMaxHeight, root.screenH - 220)
 
-    // 窗口只覆盖面板本身的大小与位置。
-    // 这样 niri 的 background-effect 模糊就只作用于面板区域，
-    // 而不会像全屏 surface 那样把整张壁纸都糊掉。
-    implicitWidth: root.panelWidth
-    implicitHeight: root.panelHeight
+    // 窗口尺寸 = 面板 + 四周的阴影边距。
+    //
+    // 为什么非要留边距：layer-shell 的 surface 边界就是窗口矩形，绘制到边界外的
+    // 内容一律不可见。而 RectangularShadow 的 offset/blur 会让阴影溢出面板边界 ——
+    // offset 向下 8px 时，下方两角的圆角被裁成直线、上方两角却正常（2026-09-25 实测）。
+    // 留出边距后阴影才有完整的绘制空间，四角圆角才正确。
+    // 代价：niri 的 background-effect 作用于**整个 surface**，于是面板外会多出一圈
+    // 被模糊的区域，宽度即此边距。想彻底消除那一圈，只能关掉阴影。
+    readonly property real shadowMargin: Config.launcherShadowEnabled ? Math.ceil(
+                                                                             Config.launcherShadowBlur + Math.abs(
+                                                                                 Config.launcherShadowOffsetY)) : 0
+
+    implicitWidth: root.panelWidth + root.shadowMargin * 2
+    implicitHeight: root.panelHeight + root.shadowMargin * 2
 
     // PanelWindow 的 anchors 只支持 top/bottom/left/right 四个 bool，
     // 没有 horizontalCenter，所以水平居中用 margins.left 算。
+    // 减去 shadowMargin 是为了让**面板**（而不是窗口）仍落在原来算出的位置上 ——
+    // 否则加了边距后面板会整体偏移，视觉位置和改动前对不上。
     anchors.top: true
     anchors.left: true
-    margins.top: Math.round((root.screenH - root.panelHeight) * Config.launcherVerticalRatio)
-    margins.left: Math.round((root.screenW - root.panelWidth) / 2)
+    margins.top: Math.round((root.screenH - root.panelHeight) * Config.launcherVerticalRatio) - root.shadowMargin
+    margins.left: Math.round((root.screenW - root.panelWidth) / 2) - root.shadowMargin
 
     // 切换样式时回到第一项，避免索引越界或落点突兀
     onViewStyleChanged: root.selectedIndex = 0
@@ -526,7 +546,10 @@ PanelWindow {
     // 几何等价，但免掉了对后面声明项的依赖。
     // 三个动画绑定必须与 panel 保持一致，否则退场时会看到一圈孤立的阴影留在原地。
     RectangularShadow {
+        // 内缩 shadowMargin，与 panel 的几何保持一致 ——
+        // 窗口比面板大一圈，正是为了给这里的 blur/offset 留绘制空间
         anchors.fill: parent
+        anchors.margins: root.shadowMargin
         radius: Config.launcherPanelRadius
         blur: Config.launcherShadowBlur
         color: Qt.rgba(0, 0, 0, Config.launcherShadowOpacity)
@@ -542,8 +565,10 @@ PanelWindow {
     Rectangle {
         id: panel
 
-        // 窗口尺寸已等于面板尺寸，这里直接铺满
+        // 窗口比面板四周各大 shadowMargin（那是给阴影留的绘制空间），这里内缩回来。
+        // 于是 panel 的实际尺寸仍等于 panelWidth/panelHeight，内部布局不受影响。
         anchors.fill: parent
+        anchors.margins: root.shadowMargin
         radius: Config.launcherPanelRadius
 
         // 开关动画。**窗口尺寸不变**，只动这三个 —— 窗口自身 resize 会让 GridView
@@ -561,9 +586,9 @@ PanelWindow {
         color: root.tone(root.ca(Config.launcherPanelSurface, Config.launcherPanelOpacity,
                                  Qt.rgba(0.17, 0.27, 0.47, Config.launcherPanelOpacity)),
                          Config.launcherPanelBrightness, Config.launcherPanelSaturation)
-        border.width: 1
-        // 描边跟底色同色系（primary），避免用 outline 的灰在蓝底上围出一圈脏边
-        border.color: root.ca("primary", 0.3, Qt.rgba(1, 1, 1, 0.14))
+        border.width: Config.launcherBorderWidth
+        // 包边色源见上面 borderColor 的说明（用 primary，随壁纸色相变化）
+        border.color: root.borderColor
 
         // 刻意不给 width 加动画：动画期间宽度每帧变化，会让 GridView 的
         // cellWidth 每帧重算、delegate 持续重排，切换样式时明显掉帧。
