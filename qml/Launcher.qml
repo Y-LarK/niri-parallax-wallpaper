@@ -294,6 +294,12 @@ PanelWindow {
     // 用派生属性而非改写 viewStyle，这样退出壁纸模式后用户原来的选择还在。
     readonly property string effectiveViewStyle: root.wallpaperMode ? "grid" : root.viewStyle
 
+    // 壁纸网格每行几张。**刻意跟 root.viewStyle 而不是有效样式走** ——
+    // 面板宽度是按 root.viewStyle 算的（见上面的 panelWidth），而壁纸模式下
+    // 渲染被强制成网格，于是窄面板（列表样式 640）里也必须少放几张才不会挤。
+    // 列数与面板宽同源，格子宽度才能整除、右侧不留白。
+    readonly property int wallpaperColumns: root.viewStyle === "grid" ? Config.launcherWallpaperGridColumns : Config.launcherWallpaperListColumns
+
     // 当前选中项（可能是应用，也可能是末尾的"打开网址/搜索"条目）
     readonly property var selectedItem: (root.selectedIndex >= 0
                                          && root.selectedIndex < root.results.length)
@@ -907,10 +913,16 @@ PanelWindow {
                     clip: true
                     model: root.results
                     currentIndex: root.selectedIndex
-                    // 壁纸格子更大：只显示图不显示名字，大一点才好挑
-                    cellWidth: root.wallpaperMode ? Math.min(width, Config.launcherWallpaperCellWidth)
-                                                  : Math.min(width, Config.launcherCellWidth)
-                    cellHeight: root.wallpaperMode ? Config.launcherWallpaperCellHeight : Config.launcherCellHeight
+                    // 壁纸格子更大：只显示图不显示名字，大一点才好挑。
+                    // 宽度由「可用宽 ÷ 列数」反算（列数见 root.wallpaperColumns），
+                    // 于是整除、右侧不留白；高度再按固定宽高比缩放，两种样式下
+                    // 缩略图形状一致。取整用 floor：余下不足一列的几像素不可见。
+                    // Math.max(1, …) 是兜底：组件构造初期 width 还是 0，格子宽为 0
+                    // 会让 GridView 布局退化。应用图标墙沿用原固定格子宽，不受影响。
+                    cellWidth: root.wallpaperMode ? Math.max(1, Math.floor(width / root.wallpaperColumns)) : Math.min(
+                                                                                                                     width,
+                                                                                                                     Config.launcherCellWidth)
+                    cellHeight: root.wallpaperMode ? Math.floor(cellWidth / Config.launcherWallpaperCellAspect) : Config.launcherCellHeight
                     boundsBehavior: Flickable.StopAtBounds
                     keyNavigationEnabled: false
 
@@ -956,12 +968,16 @@ PanelWindow {
                                 source: tile.modelData.kind === "wallpaper" ? tile.modelData.url : ""
                                 // 必须限制解码尺寸：壁纸原图动辄 4096×1708 / 数 MB，
                                 // 按原尺寸解码既慢又占内存（整屏十几张就上百 MB）。
-                                sourceSize: Qt.size(Config.launcherWallpaperCellWidth * 2,
-                                                    Config.launcherWallpaperCellHeight * 2)
-                                // 与图标一样走同步加载。壁纸走 file:// 不经过那个有
-                                // 线程安全问题的 IconImageProvider，本可以异步，但保持
-                                // 一致更稳妥 —— 异步加载的坑见下面 appIcon 的注释。
-                                asynchronous: false
+                                // **用常量、不跟格子尺寸算** —— 否则格子尺寸为 0 时
+                                // Qt.size(w,0) 是无效尺寸，等价于「按原图全尺寸解码」，
+                                // 且尺寸一变就全部重解码。详见 ParallaxConfig.js。
+                                sourceSize: Qt.size(Config.launcherWallpaperThumbDecodeWidth,
+                                                    Config.launcherWallpaperThumbDecodeHeight)
+                                // 异步加载。同步的那条纪律（见下面 appIcon 的注释）针对的是
+                                // IconImageProvider（QIcon::fromTheme 非线程安全），而壁纸走
+                                // file:// 的普通图片加载，不经过它。这里必须异步：整屏 10 张
+                                // 4096×2296 的图同步解码会把 GUI 线程堵住好几秒，敲 /w 就冻。
+                                asynchronous: true
                                 fillMode: Image.PreserveAspectCrop
                                 smooth: true
                                 clip: true

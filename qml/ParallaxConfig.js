@@ -230,8 +230,23 @@ var launcherAccentBarWidth = 3
 // WALLPAPER_DIR 是同一处约定，不在别处再定义第二遍。
 // 缩略图只显示图、不显示文件名，所以格子比应用图标格大。
 var launcherWallpaperKeywords = ["壁纸", "/w", "wallpaper"]
-var launcherWallpaperCellWidth = 248
-var launcherWallpaperCellHeight = 156
+// 壁纸网格每行几张。面板宽度随启动器样式走（图标墙 920 / 列表 640，见
+// Launcher.qml 的 panelWidth），所以列数也分样式给：图标墙 4 列、列表 2 列。
+// 格子宽度由「可用宽 ÷ 列数」反算（Launcher.qml 的 appGrid.cellWidth），
+// 整除即可，右侧不会留下除不尽的空白。
+var launcherWallpaperGridColumns = 4
+var launcherWallpaperListColumns = 2
+// 格子宽高比，取自旧的固定尺寸 248×156 ≈ 1.59。高度由宽度反算，
+// 于是两种样式下缩略图形状一致，只是整体缩放，不会被拉扁或压扁。
+var launcherWallpaperCellAspect = 1.59
+// 缩略图的**解码尺寸**，必须是常量，绝不能跟着格子尺寸算。两个理由：
+// ① 缩略图按「来源 + 解码尺寸」缓存，尺寸一变（切样式、重排）10 张图全部重解码；
+// ② 更要命的是布局初期格子尺寸可能是 0，而 Qt.size(w, 0) 是**无效尺寸**，
+//    Image 对无效 sourceSize 的语义是「按原图解码」—— 壁纸原图 4096×2296、
+//    单张十几 MB，于是整个 UI 冻住。取值覆盖两种样式下最大格子（列表 2 列约
+//    306×192）的 2 倍，给高分屏留余量。
+var launcherWallpaperThumbDecodeWidth = 640
+var launcherWallpaperThumbDecodeHeight = 400
 
 // 网页搜索用的引擎（见 SearchEngines.js 的 engines 表）
 // 可选：google / bing / baidu / duckduckgo / sogou / brave / startpage / ecosia
