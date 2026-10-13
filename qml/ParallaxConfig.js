@@ -58,11 +58,12 @@ var animationEasing = 5 // OutCubic
 // ------------------------------------------------------------ 换图转场
 // "random" —— 每次从 includedTransitions 里随机挑一种（推荐）
 // "none"   —— 不做转场，直接切换
-// 也可写死一种：fade / wipe / disc / stripes / iris bloom / pixelate / portal
+// 也可写死一种：fade / wipe / disc / stripes / iris bloom / portal
 var transitionType = "random"
 
 // random 模式下参与抽取的效果池
-var includedTransitions = ["fade", "wipe", "disc", "stripes", "iris bloom", "pixelate", "portal"]
+// （pixelate 已于 2026-10-13 按用户要求删除 —— shader、QML 组件、此处一并移除）
+var includedTransitions = ["fade", "wipe", "disc", "stripes", "iris bloom", "portal"]
 
 // 转场时长（毫秒）
 var transitionDurationMs = 1000

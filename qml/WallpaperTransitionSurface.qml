@@ -18,8 +18,7 @@ Item {
     property real shaderFillMode: 2
     // random 表示每次从 includedTransitions 里随机挑一种
     property string transitionType: "random"
-    property var includedTransitions: ["fade", "wipe", "disc", "stripes", "iris bloom", "pixelate",
-        "portal"]
+    property var includedTransitions: ["fade", "wipe", "disc", "stripes", "iris bloom", "portal"]
     property int transitionDurationMs: 1000
     property string transitionEasingMode: "customBezier"
     property var transitionBezierCurve: [0.43, 1.19, 1.0, 0.4, 1.0, 1.0]
@@ -136,7 +135,6 @@ Item {
             root.wipeDirection = Math.random() * 4;
             break;
         case "disc":
-        case "pixelate":
         case "portal":
             root.discCenterX = Math.random();
             root.discCenterY = Math.random();
@@ -298,8 +296,6 @@ Item {
                 return stripesComp;
             case "iris bloom":
                 return irisComp;
-            case "pixelate":
-                return pixelateComp;
             case "portal":
                 return portalComp;
             case "fade":
@@ -309,7 +305,7 @@ Item {
         }
     }
 
-    // ------------------------------------------------------- 7 种转场效果
+    // ------------------------------------------------------- 6 种转场效果
     Component {
         id: fadeComp
 
@@ -421,30 +417,6 @@ Item {
             property real screenWidth: root.width
             property real screenHeight: root.height
             fragmentShader: Qt.resolvedUrl("shaders/wp_iris_bloom.frag.qsb")
-        }
-    }
-
-    Component {
-        id: pixelateComp
-
-        ShaderEffect {
-            anchors.fill: parent
-            property variant source1: srcCurrent
-            property variant source2: srcNext
-            property real progress: root.transitionProgress
-            property real smoothness: root.edgeSmoothness
-            property real fillMode: root.shaderFillMode
-            property vector4d fillColor: root.fillColor
-            property real imageWidth1: root.width
-            property real imageHeight1: root.height
-            property real imageWidth2: root.width
-            property real imageHeight2: root.height
-            property real screenWidth: root.width
-            property real screenHeight: root.height
-            property real centerX: root.discCenterX
-            property real centerY: root.discCenterY
-            property real aspectRatio: root.width / Math.max(1, root.height)
-            fragmentShader: Qt.resolvedUrl("shaders/wp_pixelate.frag.qsb")
         }
     }
 
