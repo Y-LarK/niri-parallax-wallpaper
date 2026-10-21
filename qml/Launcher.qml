@@ -213,6 +213,12 @@ PanelWindow {
             if (!app || app.noDisplay === true || app.hidden === true)
                 continue;
             const id = String(app.id || "");
+            // Waydroid 为每个安卓应用生成的 desktop id 形如 waydroid.<包名>。
+            // 这些条目由 Waydroid 每次会话启动时重写，改文件留不住，所以在
+            // 启动器侧统一过滤；主入口 id 是 Waydroid（无前缀），保留不藏。
+            // 安卓应用改从 Waydroid 全屏界面启动。
+            if (id.startsWith("waydroid."))
+                continue;
             const cmd = app.command || [];
             if (!id || !cmd || cmd.length === 0)
                 continue;
