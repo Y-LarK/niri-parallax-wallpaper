@@ -1,4 +1,4 @@
-# niri-desktop-shell
+# niri-parallax-wallpaper
 
 [niri](https://github.com/YaLTeR/niri) 的桌面壳层：视差壁纸 + 启动器 + 电源菜单，同进程运行，基于 [Quickshell](https://quickshell.org/) 与 Qt 6 / QML / 原生 C++ 模块。
 
