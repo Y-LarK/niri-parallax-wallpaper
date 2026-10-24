@@ -1095,7 +1095,8 @@ PanelWindow {
                                 height: 40
                                 // 壁纸只显示缩略图，不显示文件名
                                 visible: tile.modelData.kind !== "wallpaper"
-                                text: tile.modelData.name
+                                // 壁纸条目没有 name 字段，绑定仍会求值，必须兜底
+                                text: tile.modelData.name ?? ""
                                 font.pixelSize: Config.launcherLabelFontSize
                                 color: tile.selected ? root.c("onPrimaryContainer", "#ffffff") : root.c("onSurface",
                                                                                                          "#cdd6f4")
