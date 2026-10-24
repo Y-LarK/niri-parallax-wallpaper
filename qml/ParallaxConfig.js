@@ -89,7 +89,7 @@ var overviewWallpaperPath = ""
 var overviewFillMode = "Fill"
 
 // 背景模糊半径，0 = 不模糊。建议 0 ~ 64，值越大越糊（性能开销也越大）
-var overviewBlurRadius = 0
+var overviewBlurRadius = 64
 
 // 调暗程度，0 = 不调暗，1 = 全黑。用于让 overview 里的窗口更突出
 var overviewDim = 0.35
